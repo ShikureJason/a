@@ -95,26 +95,41 @@ class ProcessGatewayData implements ShouldQueue
         
         $sessionId = $this->sessionId;
         // 🔥 save (pipeline)
-        Redis::pipeline(function ($pipe) use ($bestUsers, $sessionId) {
+        $now = time();
+
+        Redis::pipeline(function ($pipe) use ($bestUsers, $sessionId, $now) {
 
             foreach ($bestUsers as $userId => $data) {
 
                 $key = "gateway:$sessionId:user:$userId:live";
 
-                // ✅ ถ้าไม่มี → สร้างใหม่
-                // ✅ ถ้ามี → บวกเพิ่ม
-
+                // =========================
+                // ของเดิม
+                // =========================
                 $pipe->hincrbyfloat($key, 'rssi_sum', $data['rssi']);
                 $pipe->hincrby($key, 'time_sum', $data['time']);
                 $pipe->hincrby($key, 'count', 1);
 
-                // field ที่ไม่ต้องสะสม → update ปกติ
                 $pipe->hset($key, 'last_device', $data['device']);
                 $pipe->hset($key, 'last_seen', $this->time);
-                
-                // ใส่แค่ครั้งแรกเท่านั้น
                 $pipe->hsetnx($key, 'first_active', $this->time);
 
+                // =========================
+                // 🔥 เพิ่มตรงนี้ (สำคัญ)
+                // =========================
+
+                // 🟢 global online user
+                $pipe->zadd('online:all', $now, $userId);
+
+                // 🟢 online ตาม session (ละเอียดขึ้น)
+                $pipe->zadd("online:session:$sessionId", $now, $userId);
+
+                // 🟢 optional: role (ถ้าคุณมี)
+                $pipe->zadd("online:user", $now, $userId);
+
+                // 🟢 last seen user
+                $pipe->hset("user:$userId", 'last_seen', $now);
+                $pipe->expire("user:$userId", 300);
             }
         });
     }

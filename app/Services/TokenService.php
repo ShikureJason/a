@@ -1,79 +1,44 @@
 <?php
+
 namespace App\Services;
 
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
-use Carbon\Carbon;
 
 class TokenService
 {
-    private $ttl = 3600; // 1 ชั่วโมง
+    private $ttl = 60 * 60 * 24 * 7; // 7 วัน
 
-    public function generate($userId)
+    public function generate($userId, $role)
     {
         $token = Str::random(60);
-        $expireAt = Carbon::now()->addSeconds($this->ttl);
 
-        DB::table('user_tokens')->updateOrInsert(
-            ['user_id' => $userId],
-            [
-                'token' => $token,
-                'expired_at' => $expireAt,
-                'updated_at' => now(),
-                'created_at' => now()
-            ]
-        );
+        Redis::hmset("token:$token", [
+            'user_id' => $userId,
+            'role' => $role
+        ]);
 
-        // ✅ cache ลง Redis
-        Redis::setex("token:$token", $this->ttl, $userId);
-        Redis::setex("user:$userId:token", $this->ttl, $token);
+        Redis::expire("token:$token", $this->ttl);
 
         return $token;
     }
 
     public function validate($token)
     {
-        // 🔥 1. เช็ค Redis ก่อน
-        $userId = Redis::get("token:$token");
+        $data = Redis::hgetall("token:$token");
 
-        if ($userId) {
-            return $userId;
-        }
-
-        // 🔥 2. fallback DB
-        $record = DB::table('user_tokens')
-            ->where('token', $token)
-            ->first();
-
-        if (!$record) return null;
-
-        // 🔥 3. check expire
-        if ($record->expired_at && now()->gt($record->expired_at)) {
+        if (!$data) {
             return null;
         }
 
-        // 🔥 4. cache กลับ Redis
-        $ttl = now()->diffInSeconds($record->expired_at, false);
+        // 🔥 sliding session
+        Redis::expire("token:$token", $this->ttl);
 
-        if ($ttl > 0) {
-            Redis::setex("token:$token", $ttl, $record->user_id);
-            Redis::setex("user:{$record->user_id}:token", $ttl, $token);
-        }
-
-        return $record->user_id;
+        return $data; // ['user_id' => ..., 'role' => ...]
     }
 
-    public function revoke($userId)
+    public function logout($token)
     {
-        $token = Redis::get("user:$userId:token");
-
-        if ($token) {
-            Redis::del("token:$token");
-        }
-
-        Redis::del("user:$userId:token");
-
-        DB::table('user_tokens')->where('user_id', $userId)->delete();
+        Redis::del("token:$token");
     }
 }

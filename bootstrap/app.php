@@ -15,6 +15,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api();
         $middleware->alias([
             'device.auth' => \App\Http\Middleware\VerifyDevice::class,
+            'auth.token' => \App\Http\Middleware\AuthToken::class,
+            'role' => \App\Http\Middleware\Role::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

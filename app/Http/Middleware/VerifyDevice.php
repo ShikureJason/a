@@ -164,6 +164,27 @@ class VerifyDevice
             $pipe->setex($nonceKey, 60, 1);
         });
 
+        // -----------------------------
+        // 12. update device realtime tracking 🔥
+        // -----------------------------
+        $now = time();
+
+        Redis::pipeline(function ($pipe) use ($deviceId, $ip, $data, $now) {
+
+            // 🟢 online tracking (สำคัญ)
+            $pipe->zadd('device:online', $now, $deviceId);
+
+            // 🟢 device detail
+            $pipe->hmset("device:$deviceId", [
+                'last_seen' => $now,
+                'ip' => $ip,
+                'rssi' => $data['rssi'] ?? null,
+            ]);
+
+            // auto expire detail
+            $pipe->expire("device:$deviceId", 300);
+        });
+
         return $next($request);
     }
 }
